@@ -8,6 +8,7 @@ It restores fresh shells. Running programs, shell memory, and scrollback are int
 
 ```sh
 cargo install --path .
+wezurrection version
 wezurrection save
 wezurrection restore
 wezurrection enable

@@ -22,6 +22,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Version,
     Enable,
     Disable,
     Status,
@@ -32,6 +33,10 @@ enum Command {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::Version => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Command::Enable => enable(),
         Command::Disable => disable(),
         Command::Status => status(),
