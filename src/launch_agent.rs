@@ -5,6 +5,32 @@ use std::process::{Command, Stdio};
 
 const LABEL: &str = "com.wezurrection.agent";
 
+/// Returns the current macOS boot time in Unix seconds.
+/// Fails if sysctl is unavailable or returns an unexpected value.
+pub fn boot_time() -> Result<u64> {
+    let output = Command::new("/usr/sbin/sysctl")
+        .args(["-n", "kern.boottime"])
+        .output()
+        .context("failed to read macOS boot time")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "could not read macOS boot time: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    parse_boot_time(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_boot_time(value: &str) -> Result<u64> {
+    value
+        .split_once("sec =")
+        .and_then(|(_, rest)| rest.split_once(','))
+        .map(|(seconds, _)| seconds.trim())
+        .context("macOS boot time did not contain seconds")?
+        .parse()
+        .context("macOS boot time contained invalid seconds")
+}
+
 pub fn plist_path() -> Result<PathBuf> {
     let home = dirs::home_dir().context("could not determine the home directory")?;
     Ok(home
@@ -91,4 +117,33 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_macos_boot_time() {
+        // Given
+        let value = "{ sec = 1791497975, usec = 877166 } Fri Oct 9 07:19:35 2026\n";
+        let expected = 1_791_497_975;
+
+        // When
+        let actual = parse_boot_time(value).unwrap();
+
+        // Then
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rejects_invalid_boot_time() {
+        for value in ["", "{ usec = 123 }", "{ sec = invalid, usec = 123 }"] {
+            // When
+            let actual = parse_boot_time(value);
+
+            // Then
+            assert!(actual.is_err(), "accepted {value:?}");
+        }
+    }
 }

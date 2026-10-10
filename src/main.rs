@@ -101,8 +101,15 @@ fn watch() -> Result<()> {
     let terminal = WezTerm::default();
     let home = dirs::home_dir().context("could not determine the home directory")?;
     let mut was_running = false;
-    let mut observed_absence = false;
+    // macOS can reopen WezTerm before launchd starts this watcher.
+    let mut observed_absence = needs_startup_restore(
+        storage::read_snapshot()?
+            .as_ref()
+            .map(|snapshot| snapshot.saved_at),
+        launch_agent::boot_time()?,
+    );
     let mut restored = false;
+    let mut restore_failed = false;
     let mut ignored_windows = HashSet::new();
     let mut last_fingerprint = None;
     let mut last_save = Instant::now() - SAVE_INTERVAL;
@@ -112,6 +119,7 @@ fn watch() -> Result<()> {
             Ok(panes) if !panes.is_empty() => {
                 if !was_running {
                     restored = !observed_absence;
+                    restore_failed = false;
                     ignored_windows.clear();
                 }
                 was_running = true;
@@ -133,18 +141,27 @@ fn watch() -> Result<()> {
                                 ),
                             },
                             Ok(()) => {}
-                            Err(error) => eprintln!("wezurrection: restore failed: {error:#}"),
+                            Err(error) => {
+                                restore_failed = true;
+                                eprintln!("wezurrection: restore failed; automatic saves paused until WezTerm restarts: {error:#}");
+                            }
                         }
                     }
                     restored = true;
                 }
 
-                if last_save.elapsed() >= SAVE_INTERVAL {
-                    let snapshot = capture(&terminal, &ignored_windows)?;
-                    let fingerprint = serde_json::to_string(&snapshot.windows)?;
-                    if last_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                        storage::write_snapshot(&snapshot)?;
-                        last_fingerprint = Some(fingerprint);
+                if !restore_failed && last_save.elapsed() >= SAVE_INTERVAL {
+                    match capture(&terminal, &ignored_windows) {
+                        Ok(snapshot) => {
+                            let fingerprint = serde_json::to_string(&snapshot.windows)?;
+                            if last_fingerprint.as_deref() != Some(fingerprint.as_str()) {
+                                storage::write_snapshot(&snapshot)?;
+                                last_fingerprint = Some(fingerprint);
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("wezurrection: could not capture session: {error:#}");
+                        }
                     }
                     last_save = Instant::now();
                 }
@@ -156,6 +173,10 @@ fn watch() -> Result<()> {
         }
         thread::sleep(POLL_INTERVAL);
     }
+}
+
+fn needs_startup_restore(saved_at: Option<u64>, boot_time: u64) -> bool {
+    saved_at.is_some_and(|saved_at| saved_at < boot_time)
 }
 
 fn capture(terminal: &WezTerm, ignored_windows: &HashSet<u64>) -> Result<Snapshot> {
@@ -179,4 +200,27 @@ fn starter_pane_to_close(initial: &[RawPane], current: &[RawPane]) -> Option<u64
 #[allow(dead_code)]
 fn _state_path() -> Result<PathBuf> {
     storage::snapshot_path()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_restore_depends_on_snapshot_boot() {
+        // Given: an old snapshot must restore even when WezTerm is already running.
+        let boot_time = 200;
+        for (saved_at, expected) in [
+            (Some(100), true),
+            (Some(200), false),
+            (Some(300), false),
+            (None, false),
+        ] {
+            // When
+            let actual = needs_startup_restore(saved_at, boot_time);
+
+            // Then
+            assert_eq!(actual, expected, "snapshot saved at {saved_at:?}");
+        }
+    }
 }

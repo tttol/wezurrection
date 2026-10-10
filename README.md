@@ -18,4 +18,6 @@ wezurrection disable
 
 `enable` installs a per-user macOS LaunchAgent. The agent waits for WezTerm, restores the latest snapshot once per launch, closes WezTerm's initial empty window after a successful restore, and saves changes every minute.
 
+After a macOS reboot, snapshots saved before the current boot are restored even if macOS reopens WezTerm before the agent starts. Starting the agent while a session saved during the current boot is running does not restore it again. If restoration fails, automatic saves pause until WezTerm restarts to preserve the saved session. Temporary capture failures are logged without stopping the agent.
+
 The snapshot is stored at `~/wezurrection/snapshot.json`. Existing snapshots from `~/Library/Application Support/wezurrection/snapshot.json` are read as a one-time compatibility fallback and new saves use the new location.
