@@ -4,6 +4,7 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 
 const LOADER: &str = include_str!("startup_config.lua");
+const PREVIOUS_LOADER: &str = include_str!("startup_config_v1.lua");
 
 /// Installs a local loader for a Nix-backed home configuration, without replacing
 /// an existing higher-priority configuration. Errors on filesystem failures.
@@ -25,7 +26,19 @@ pub(crate) fn install(home: &Path) -> Result<()> {
     let path = directory.join("wezterm.lua");
     let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
         Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            // Upgrade only the unchanged regular file installed by the previous release.
+            let metadata = fs::symlink_metadata(&path)
+                .context("could not inspect existing WezTerm configuration")?;
+            if metadata.file_type().is_file()
+                && fs::read_to_string(&path)
+                    .context("could not read existing WezTerm configuration")?
+                    == PREVIOUS_LOADER
+            {
+                fs::write(&path, LOADER).context("could not upgrade WezTerm startup loader")?;
+            }
+            return Ok(());
+        }
         Err(error) => return Err(error).context("could not create WezTerm startup loader"),
     };
     file.write_all(LOADER.as_bytes())
@@ -39,7 +52,7 @@ pub(crate) fn install(home: &Path) -> Result<()> {
 pub(crate) fn remove(home: &Path) -> Result<()> {
     let path = home.join(".config/wezterm/wezterm.lua");
     match fs::read_to_string(&path) {
-        Ok(content) if content == LOADER => {
+        Ok(content) if content == LOADER || content == PREVIOUS_LOADER => {
             fs::remove_file(path).context("could not remove WezTerm startup loader")?;
         }
         Ok(_) => {}
@@ -149,8 +162,56 @@ mod tests {
     }
 
     #[test]
+    fn upgrades_the_unchanged_previous_loader() {
+        // Given
+        let home = TestHome::new();
+        symlink(
+            "/nix/store/unmounted/wezterm.lua",
+            home.0.join(".wezterm.lua"),
+        )
+        .unwrap();
+        let directory = home.0.join(".config/wezterm");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("wezterm.lua");
+        fs::write(&path, PREVIOUS_LOADER).unwrap();
+        let expected = LOADER;
+
+        // When
+        install(&home.0).unwrap();
+
+        // Then
+        assert_eq!(fs::read_to_string(path).unwrap(), expected);
+    }
+
+    #[test]
+    fn preserves_customized_previous_loader() {
+        // Given
+        let home = TestHome::new();
+        symlink(
+            "/nix/store/unmounted/wezterm.lua",
+            home.0.join(".wezterm.lua"),
+        )
+        .unwrap();
+        let directory = home.0.join(".config/wezterm");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("wezterm.lua");
+        let expected = format!("{PREVIOUS_LOADER}\n-- User customization\n");
+        fs::write(&path, &expected).unwrap();
+
+        // When
+        install(&home.0).unwrap();
+
+        // Then
+        assert_eq!(fs::read_to_string(path).unwrap(), expected);
+    }
+
+    #[test]
     fn removes_only_the_unchanged_managed_loader() {
-        for (content, remains) in [(LOADER, false), ("return {}", true)] {
+        for (content, remains) in [
+            (LOADER, false),
+            (PREVIOUS_LOADER, false),
+            ("return {}", true),
+        ] {
             // Given
             let home = TestHome::new();
             let directory = home.0.join(".config/wezterm");

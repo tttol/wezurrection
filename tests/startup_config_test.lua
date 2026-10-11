@@ -3,11 +3,18 @@ local home = assert(arg[1], 'a temporary test directory is required')
 local source = home .. '/.wezterm.lua'
 local sleeps = 0
 local watched = nil
-local config_text = 'return { font_size = 15, color_scheme = "Tokyo Night" }'
+local config_text = [[
+local wezterm = require 'wezterm'
+assert(wezterm.config_dir == wezterm.home_dir, 'source config directory changed')
+assert(wezterm.config_file == wezterm.home_dir .. '/.wezterm.lua', 'source config file changed')
+return { font_size = 15, color_scheme = "Tokyo Night" }
+]]
 
 package.preload.wezterm = function()
     return {
         home_dir = home,
+        config_dir = home .. '/.config/wezterm',
+        config_file = home .. '/.config/wezterm/wezterm.lua',
         sleep_ms = function(milliseconds)
             assert(milliseconds == 100)
             sleeps = sleeps + 1

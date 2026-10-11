@@ -8,6 +8,9 @@ for attempt = 1, 600 do
     if file then
         file:close()
         wezterm.add_to_config_reload_watch_list(source)
+        -- Preserve paths used by the original config to locate its own assets.
+        wezterm.config_dir = wezterm.home_dir
+        wezterm.config_file = source
         return dofile(source)
     end
     wezterm.sleep_ms(100)
