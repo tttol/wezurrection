@@ -39,6 +39,8 @@ pub fn plist_path() -> Result<PathBuf> {
 }
 
 pub fn enable(executable: &str) -> Result<()> {
+    let home = dirs::home_dir().context("could not determine the home directory")?;
+    crate::startup_config::install(&home)?;
     let path = plist_path()?;
     let parent = path.parent().context("launch agent path has no parent")?;
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
@@ -72,6 +74,8 @@ pub fn disable() -> Result<()> {
     if path.exists() {
         fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
     }
+    let home = dirs::home_dir().context("could not determine the home directory")?;
+    crate::startup_config::remove(&home)?;
     Ok(())
 }
 
